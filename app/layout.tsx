@@ -1,3 +1,4 @@
+import React from "react"
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
@@ -7,8 +8,8 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'v0 App',
-  description: 'Created with v0',
+  title: '집사 - 가사도우미 마켓플레이스',
+  description: '믿을 수 있는 가사도우미를 쉽고 빠르게 찾아보세요',
   generator: 'v0.app',
   icons: {
     icon: [
@@ -35,8 +36,8 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
-      <body className={`font-sans antialiased`}>
+    <html lang="ko">
+      <body className="font-sans antialiased w-full max-w-full overflow-x-hidden">
         {children}
         <Analytics />
       </body>

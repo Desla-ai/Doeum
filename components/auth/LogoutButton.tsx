@@ -14,21 +14,25 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { useAuth } from "@/hooks/useAuth";
+import { useMockAuth } from "@/hooks/useMockAuth";
 
 export function LogoutButton() {
   const router = useRouter();
-  const { signOut } = useAuth();
+  const { logout } = useMockAuth();
   const [open, setOpen] = useState(false);
 
-  const handleLogout = async () => {
-    await signOut();
+  const handleLogout = () => {
+    // Clear mock auth
+    logout();
     // Optionally reset app mode to customer
     if (typeof window !== "undefined") {
       localStorage.removeItem("app_mode");
     }
+    // Close dialog
     setOpen(false);
+    // Navigate to login
     router.replace("/login");
+    // Force re-render
     router.refresh();
   };
 
