@@ -9,14 +9,14 @@ import { AgreementCheckbox } from "@/components/auth/AgreementCheckbox";
 import { AuthDivider } from "@/components/auth/AuthDivider";
 import { SocialLoginButtons } from "@/components/auth/SocialLoginButtons";
 import { PrimaryButton, SecondaryButton } from "@/components/ui-kit";
-import { useMockAuth } from "@/hooks/useMockAuth";
+import { useAuth } from "@/hooks/useAuth";
 import { CheckCircle } from "lucide-react";
 
 type SignupStep = "form" | "success";
 
 export default function SignupPage() {
   const router = useRouter();
-  const { login } = useMockAuth();
+  const { authed } = useAuth();
   const [step, setStep] = useState<SignupStep>("form");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
@@ -66,11 +66,8 @@ export default function SignupPage() {
     setIsLoading(true);
     setError("");
 
-    // Mock signup - simulate API call
+    // Simulate signup processing (actual signup happens via OAuth)
     await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // Set mock auth on successful signup
-    login();
 
     // Show success state
     setStep("success");

@@ -1,6 +1,7 @@
 "use client";
 
-import Link from "next/link";
+import { useState } from "react";
+import { createSupabaseBrowser } from "@/app/(app)/lib/supabase/browser";
 
 interface SocialLoginButtonsProps {
   action?: "login" | "signup";
@@ -10,13 +11,42 @@ export function SocialLoginButtons({
   action = "login",
 }: SocialLoginButtonsProps) {
   const actionText = action === "login" ? "계속하기" : "가입하기";
+  const [loading, setLoading] = useState<"kakao" | "google" | null>(null);
+
+  const handleOAuth = async (provider: "kakao" | "google") => {
+    setLoading(provider);
+    try {
+      const supabase = createSupabaseBrowser();
+
+      // Build the redirect URL based on the current origin
+      const redirectTo = `${window.location.origin}/auth/callback`;
+
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo,
+        },
+      });
+
+      if (error) {
+        console.error("OAuth error:", error.message);
+        setLoading(null);
+      }
+      // If no error, the browser will redirect to the provider's login page
+    } catch (err) {
+      console.error("OAuth error:", err);
+      setLoading(null);
+    }
+  };
 
   return (
     <div className="space-y-3">
       {/* Kakao Login */}
-      <Link
-        href="/auth/callback?provider=kakao"
-        className="flex items-center justify-center gap-2 w-full h-12 rounded-xl bg-[#FEE500] text-[#191919] font-medium hover:bg-[#FDD835] transition-colors"
+      <button
+        type="button"
+        onClick={() => handleOAuth("kakao")}
+        disabled={loading !== null}
+        className="flex items-center justify-center gap-2 w-full h-12 rounded-xl bg-[#FEE500] text-[#191919] font-medium hover:bg-[#FDD835] transition-colors disabled:opacity-60"
       >
         <svg
           className="w-5 h-5"
@@ -26,13 +56,15 @@ export function SocialLoginButtons({
         >
           <path d="M12 3C6.48 3 2 6.48 2 10.5c0 2.52 1.68 4.74 4.2 6.03-.18.66-.66 2.4-.75 2.76-.12.48.18.48.36.36.15-.09 2.34-1.56 3.3-2.19.63.09 1.26.12 1.89.12 5.52 0 10-3.48 10-7.5S17.52 3 12 3z" />
         </svg>
-        <span>카카오로 {actionText}</span>
-      </Link>
+        <span>{loading === "kakao" ? "연결 중..." : `카카오로 ${actionText}`}</span>
+      </button>
 
       {/* Google Login */}
-      <Link
-        href="/auth/callback?provider=google"
-        className="flex items-center justify-center gap-2 w-full h-12 rounded-xl bg-white border border-[#E5E7EB] text-[#374151] font-medium hover:bg-[#F8FAFC] transition-colors"
+      <button
+        type="button"
+        onClick={() => handleOAuth("google")}
+        disabled={loading !== null}
+        className="flex items-center justify-center gap-2 w-full h-12 rounded-xl bg-white border border-[#E5E7EB] text-[#374151] font-medium hover:bg-[#F8FAFC] transition-colors disabled:opacity-60"
       >
         <svg
           className="w-5 h-5"
@@ -57,8 +89,8 @@ export function SocialLoginButtons({
             fill="#EA4335"
           />
         </svg>
-        <span>Google로 {actionText}</span>
-      </Link>
+        <span>{loading === "google" ? "연결 중..." : `Google로 ${actionText}`}</span>
+      </button>
     </div>
   );
 }
