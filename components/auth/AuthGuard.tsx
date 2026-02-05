@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { useRouter } from "next/navigation";
-import { useMockAuth } from "@/hooks/useMockAuth";
+import { useAuth } from "@/hooks/useAuth";
 import { FullScreenLoader } from "@/components/ui-kit";
+import { useEffect } from "react";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -11,33 +12,21 @@ interface AuthGuardProps {
 
 export function AuthGuard({ children }: AuthGuardProps) {
   const router = useRouter();
-  const { authed, isLoading } = useMockAuth();
-  const [timedOut, setTimedOut] = useState(false);
+  const { authed, isLoading } = useAuth();
 
-  // Fail-open timeout: if auth check takes too long, render children anyway
-  // This ensures UI-only demo mode always works
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setTimedOut(true);
-    }, 600); // 600ms max wait - then fail-open for UI demo
-
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Redirect to login if not authenticated (but don't block rendering)
-  useEffect(() => {
-    if (!isLoading && !authed && !timedOut) {
+    if (!isLoading && !authed) {
       router.replace("/login");
     }
-  }, [authed, isLoading, timedOut, router]);
+  }, [authed, isLoading, router]);
 
-  // Show loader only during initial check, with strict timeout
-  // After timeout or if loading completes, always render children (fail-open for UI demo)
-  if (isLoading && !timedOut) {
+  if (isLoading) {
     return <FullScreenLoader message="로딩 중..." />;
   }
 
-  // Always render children after timeout or when authed
-  // This ensures UI-only mode always shows the UI
+  if (!authed) {
+    return <FullScreenLoader message="로그인 페이지로 이동 중..." />;
+  }
+
   return <>{children}</>;
 }
