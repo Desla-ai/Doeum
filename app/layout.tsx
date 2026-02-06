@@ -8,7 +8,7 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: '집사 - 가사도우미 마켓플레이스',
+  title: '도움 - 가사도우미 마켓플레이스',
   description: '믿을 수 있는 가사도우미를 쉽고 빠르게 찾아보세요',
   generator: 'v0.app',
   icons: {
