@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { PrimaryButton, TierBadge, ScoreChip } from "@/components/ui-kit";
+import { PrimaryButton, TierBadge, ScoreChip, SecondaryButton, EmptyState } from "@/components/ui-kit";
 import { BottomCTA } from "@/components/shell/BottomCTA";
 import { useAppMode } from "@/components/providers/AppModeProvider";
 import {
@@ -22,9 +22,9 @@ import {
   ImagePlus,
   X,
   Search,
-  Map,
   Check,
   AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 
 const categories = [
@@ -33,27 +33,6 @@ const categories = [
   { id: "cooking", label: "요리" },
   { id: "organizing", label: "정리" },
   { id: "other", label: "기타" },
-];
-
-const mockAddressResults = [
-  {
-    id: "1",
-    roadAddress: "서울 강남구 테헤란로 152",
-    jibunAddress: "서울 강남구 역삼동 737",
-    region: "서울 강남구",
-  },
-  {
-    id: "2",
-    roadAddress: "서울 강남구 봉은사로 524",
-    jibunAddress: "서울 강남구 삼성동 159",
-    region: "서울 강남구",
-  },
-  {
-    id: "3",
-    roadAddress: "서울 서초구 반포대로 235",
-    jibunAddress: "서울 서초구 반포동 19-1",
-    region: "서울 서초구",
-  },
 ];
 
 const mockPreferredHelper = {
@@ -85,10 +64,33 @@ function HelperModeBanner({ onSwitchMode }: { onSwitchMode: () => void }) {
   );
 }
 
-function splitRegion(region: string) {
-  // "서울 강남구" -> sigungu="서울 강남구", dong="" (mock 데이터가 dong을 안 주므로 최소 처리)
-  return { region_sigungu: region || "", region_dong: "" };
+function splitRegionMinimal(regionSigungu: string, regionDong: string) {
+  return { region_sigungu: regionSigungu || "", region_dong: regionDong || "" };
 }
+
+type AddressRow = {
+  id: string;
+  user_id: string;
+  region_sigungu: string;
+  region_dong: string;
+  address_line: string;
+  address_detail: string | null;
+  lat: number | null;
+  lng: number | null;
+  created_at: string;
+};
+
+type SelectedAddress = {
+  // UI/submit에서 공통으로 쓰기 위한 형태
+  id?: string; // 있으면 기존 주소
+  road: string;
+  jibun: string; // 현재 AddressRow에 지번이 없으니 "표시용"으로 빈 문자열 유지
+  detail: string;
+  region_sigungu: string;
+  region_dong: string;
+  lat: number | null;
+  lng: number | null;
+};
 
 export default function NewRequestPage() {
   const router = useRouter();
@@ -102,17 +104,19 @@ export default function NewRequestPage() {
   const [price, setPrice] = useState("");
   const [notes, setNotes] = useState("");
   const [photos, setPhotos] = useState<string[]>([]);
-  const [address, setAddress] = useState<{
-    road: string;
-    jibun: string;
-    detail: string;
-    region: string;
-  } | null>(null);
 
+  // ✅ 최종적으로 요청 제출에 쓰는 주소 상태(연동 대상)
+  const [address, setAddress] = useState<SelectedAddress | null>(null);
+
+  // Address modal
   const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
   const [addressSearch, setAddressSearch] = useState("");
-  const [addressResults, setAddressResults] = useState(mockAddressResults);
-  const [selectedAddress, setSelectedAddress] = useState<(typeof mockAddressResults)[0] | null>(null);
+
+  const [addrRows, setAddrRows] = useState<AddressRow[]>([]);
+  const [addrLoading, setAddrLoading] = useState(false);
+  const [addrError, setAddrError] = useState<string | null>(null);
+
+  const [selectedRow, setSelectedRow] = useState<AddressRow | null>(null);
   const [detailAddress, setDetailAddress] = useState("");
 
   const [isDirectRequest, setIsDirectRequest] = useState(!!preferredHelperId);
@@ -122,6 +126,19 @@ export default function NewRequestPage() {
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
   const showHelperBanner = isHelper;
+
+  const canSubmit = useMemo(() => {
+    return (
+      !isHelper &&
+      !!category &&
+      !!date &&
+      !!time &&
+      !!address &&
+      !!price &&
+      Number(price) > 0 &&
+      consentChecked
+    );
+  }, [isHelper, category, date, time, address, price, consentChecked]);
 
   const handlePhotoAdd = () => {
     if (photos.length < 5) {
@@ -136,36 +153,44 @@ export default function NewRequestPage() {
     setPhotos((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleAddressSearch = (query: string) => {
-    setAddressSearch(query);
-    if (query) {
-      setAddressResults(
-        mockAddressResults.filter(
-          (a) => a.roadAddress.includes(query) || a.jibunAddress.includes(query)
-        )
-      );
-    } else {
-      setAddressResults(mockAddressResults);
+  const loadAddresses = async () => {
+    setAddrLoading(true);
+    setAddrError(null);
+    try {
+      const res = await fetch("/api/addresses", { method: "GET" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error?.message || json?.error || `주소 목록 로드 실패 (${res.status})`);
+      setAddrRows((json?.data ?? []) as AddressRow[]);
+    } catch (e: any) {
+      console.error(e);
+      setAddrRows([]);
+      setAddrError(e?.message || "주소 목록을 불러오지 못했어요.");
+    } finally {
+      setAddrLoading(false);
     }
   };
 
-  const handleAddressSelect = (selected: (typeof mockAddressResults)[0]) => {
-    setSelectedAddress(selected);
-  };
+  // 모달 열릴 때 주소록 로드
+  useEffect(() => {
+    if (!isAddressModalOpen) return;
 
-  const handleAddressSave = () => {
-    if (selectedAddress) {
-      setAddress({
-        road: selectedAddress.roadAddress,
-        jibun: selectedAddress.jibunAddress,
-        detail: detailAddress,
-        region: selectedAddress.region,
-      });
-      setIsAddressModalOpen(false);
-      setSelectedAddress(null);
-      setDetailAddress("");
-    }
-  };
+    // 모달 오픈 시 초기화
+    setAddressSearch("");
+    setSelectedRow(null);
+    setDetailAddress(address?.detail || "");
+
+    loadAddresses();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAddressModalOpen]);
+
+  const filteredAddrRows = useMemo(() => {
+    const q = addressSearch.trim();
+    if (!q) return addrRows;
+    return addrRows.filter((r) => {
+      const a = `${r.region_sigungu} ${r.region_dong} ${r.address_line} ${r.address_detail ?? ""}`.toLowerCase();
+      return a.includes(q.toLowerCase());
+    });
+  }, [addrRows, addressSearch]);
 
   const validateForm = (): boolean => {
     const errors: string[] = [];
@@ -177,6 +202,24 @@ export default function NewRequestPage() {
     if (!consentChecked) errors.push("취소/분쟁 정책에 동의해주세요");
     setValidationErrors(errors);
     return errors.length === 0;
+  };
+
+  const handleAddressSave = () => {
+    if (!selectedRow) return;
+
+    setAddress({
+      id: selectedRow.id, // ✅ 기존 주소를 그대로 사용
+      road: selectedRow.address_line,
+      jibun: "", // 현재 AddressRow에 없음 (추후 DB에 jibun 컬럼 생기면 매핑 가능)
+      detail: detailAddress,
+      region_sigungu: selectedRow.region_sigungu,
+      region_dong: selectedRow.region_dong,
+      lat: selectedRow.lat ?? null,
+      lng: selectedRow.lng ?? null,
+    });
+
+    setIsAddressModalOpen(false);
+    setSelectedRow(null);
   };
 
   const handleSubmit = async () => {
@@ -191,30 +234,35 @@ export default function NewRequestPage() {
     setValidationErrors([]);
 
     try {
-      // 1) 주소 먼저 생성 (requests.address_id NOT NULL 대응)
-      const { region_sigungu, region_dong } = splitRegion(address.region);
+      // ✅ 1) address_id 결정: 이미 선택한 주소(id 있음)이면 그대로 사용
+      let address_id: string | null = address.id ?? null;
 
-      const addrRes = await fetch("/api/addresses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          region_sigungu,
-          region_dong,
-          address_line: address.road,
-          address_detail: address.detail || "",
-          lat: null,
-          lng: null,
-        }),
-      });
+      const { region_sigungu, region_dong } = splitRegionMinimal(address.region_sigungu, address.region_dong);
 
-      const addrJson = await addrRes.json().catch(() => ({}));
-      if (!addrRes.ok) throw new Error(addrJson?.error?.message || `주소 저장 실패 (${addrRes.status})`);
+      // (선택) 만약 id가 없는 주소 입력 플로우가 생긴다면 fallback으로 주소 생성
+      if (!address_id) {
+        const addrRes = await fetch("/api/addresses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            region_sigungu,
+            region_dong,
+            address_line: address.road,
+            address_detail: address.detail || "",
+            lat: address.lat,
+            lng: address.lng,
+          }),
+        });
 
-      const address_id = addrJson?.data?.id;
-      if (!address_id) throw new Error("address_id missing");
+        const addrJson = await addrRes.json().catch(() => ({}));
+        if (!addrRes.ok) throw new Error(addrJson?.error?.message || `주소 저장 실패 (${addrRes.status})`);
 
-      // 2) 요청 생성
-      const scheduled_at = `${date}T${time}:00+09:00`; // 단순 구성 (정밀 KST 변환은 다음 단계)
+        address_id = addrJson?.data?.id;
+        if (!address_id) throw new Error("address_id missing");
+      }
+
+      // ✅ 2) 요청 생성
+      const scheduled_at = `${date}T${time}:00+09:00`; // 단순 KST 구성
       const catLabel = categories.find((c) => c.id === category)?.label || category;
 
       const reqRes = await fetch("/api/requests", {
@@ -335,21 +383,28 @@ export default function NewRequestPage() {
         {/* Address */}
         <div className="space-y-2">
           <Label className="text-sm font-medium text-[#111827]">주소</Label>
+
           {address ? (
             <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
               <div className="flex items-start justify-between">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm text-[#111827] truncate">{address.road}</p>
-                  <p className="text-xs text-[#6B7280] mt-0.5 truncate">{address.jibun}</p>
-                  {address.detail && <p className="text-xs text-[#6B7280] truncate">{address.detail}</p>}
+                  {address.region_sigungu || address.region_dong ? (
+                    <p className="text-xs text-[#6B7280] mt-0.5 truncate">
+                      {address.region_sigungu} {address.region_dong}
+                    </p>
+                  ) : null}
+                  {address.detail ? <p className="text-xs text-[#6B7280] truncate">{address.detail}</p> : null}
                 </div>
+
                 <Badge
                   variant="outline"
                   className="bg-white text-[#374151] border-[#E5E7EB] text-xs shrink-0 ml-2"
                 >
-                  {address.region}
+                  {address.region_sigungu || "내 주소"}
                 </Badge>
               </div>
+
               <Button
                 variant="ghost"
                 size="sm"
@@ -367,7 +422,7 @@ export default function NewRequestPage() {
               className="w-full h-12 rounded-xl border-[#E5E7EB] text-[#6B7280] hover:bg-[#F8FAFC]"
             >
               <MapPin className="w-4 h-4 mr-2" />
-              주소 찾기
+              내 주소에서 선택
             </Button>
           )}
         </div>
@@ -383,9 +438,7 @@ export default function NewRequestPage() {
               placeholder="50000"
               className="pr-16 rounded-xl border-[#E5E7EB]"
             />
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280] text-sm">
-              원/건당
-            </span>
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280] text-sm">원/건당</span>
           </div>
         </div>
 
@@ -412,7 +465,12 @@ export default function NewRequestPage() {
                 key={index}
                 className="relative w-20 h-20 rounded-xl overflow-hidden flex-shrink-0 border border-[#E5E7EB]"
               >
-                <Image src={photo || "/placeholder.svg"} alt={`Photo ${index + 1}`} fill className="object-cover" />
+                <Image
+                  src={photo || "/placeholder.svg"}
+                  alt={`Photo ${index + 1}`}
+                  fill
+                  className="object-cover"
+                />
                 <button
                   type="button"
                   onClick={() => handlePhotoRemove(index)}
@@ -472,20 +530,16 @@ export default function NewRequestPage() {
 
       {/* Sticky Submit Button */}
       <BottomCTA>
-        <PrimaryButton
-          onClick={handleSubmit}
-          disabled={isSubmitting}
-          className="w-full h-12 text-base"
-        >
+        <PrimaryButton onClick={handleSubmit} disabled={isSubmitting || !canSubmit} className="w-full h-12 text-base">
           {isSubmitting ? "등록 중..." : showHelperBanner ? "고객 모드로 전환 필요" : "요청 등록하기"}
         </PrimaryButton>
       </BottomCTA>
 
-      {/* Address Search Modal */}
+      {/* Address Modal (내 주소록 연동) */}
       <Dialog open={isAddressModalOpen} onOpenChange={setIsAddressModalOpen}>
         <DialogContent className="sm:max-w-md max-h-[90vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>주소 찾기</DialogTitle>
+            <DialogTitle>내 주소에서 선택</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
@@ -493,63 +547,118 @@ export default function NewRequestPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#6B7280]" />
               <Input
                 value={addressSearch}
-                onChange={(e) => handleAddressSearch(e.target.value)}
-                placeholder="도로명, 지번, 건물명으로 검색"
+                onChange={(e) => setAddressSearch(e.target.value)}
+                placeholder="시/군/구, 동, 주소로 검색"
                 className="pl-10 rounded-xl border-[#E5E7EB]"
               />
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-2 no-scrollbar">
-              {addressResults.map((result) => (
-                <button
-                  key={result.id}
-                  type="button"
-                  onClick={() => handleAddressSelect(result)}
-                  className={`w-full p-3 rounded-xl text-left transition-colors ${
-                    selectedAddress?.id === result.id
-                      ? "bg-[#F0FDF4] border-2 border-[#22C55E]"
-                      : "bg-[#F8FAFC] border border-[#E5E7EB] hover:bg-[#F1F5F9]"
-                  }`}
-                >
-                  <p className="text-sm font-medium text-[#111827]">{result.roadAddress}</p>
-                  <p className="text-xs text-[#6B7280] mt-0.5">{result.jibunAddress}</p>
-                  {selectedAddress?.id === result.id && (
-                    <div className="flex items-center gap-1 mt-1 text-[#22C55E]">
-                      <Check className="w-3 h-3" />
-                      <span className="text-xs">선택됨</span>
-                    </div>
-                  )}
-                </button>
-              ))}
+            {/* 상태 영역 */}
+            {addrError ? (
+              <div className="p-3 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-sm text-[#DC2626]">
+                {addrError}
+              </div>
+            ) : null}
+
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-[#6B7280]">
+                {addrLoading ? "불러오는 중..." : `${filteredAddrRows.length}개 주소`}
+              </div>
+              <button
+                type="button"
+                onClick={loadAddresses}
+                className="inline-flex items-center gap-1 text-xs text-[#6B7280] hover:text-[#111827]"
+                disabled={addrLoading}
+              >
+                <RefreshCw className="w-3 h-3" />
+                새로고침
+              </button>
             </div>
 
-            {selectedAddress && (
-              <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
-                <div className="flex items-center gap-2 text-[#6B7280] mb-2">
-                  <Map className="w-4 h-4" />
-                  <span className="text-sm">지도에서 위치 확인</span>
+            <div className="flex-1 overflow-y-auto space-y-2 no-scrollbar">
+              {!addrLoading && filteredAddrRows.length === 0 ? (
+                <div className="py-8">
+                  <EmptyState
+                    icon={<MapPin className="w-8 h-8" />}
+                    title="저장된 주소가 없어요"
+                    description="마이페이지 > 주소 설정에서 주소를 먼저 추가해 주세요."
+                  />
                 </div>
-                <div className="aspect-video rounded-lg bg-[#E5E7EB] flex items-center justify-center">
-                  <span className="text-sm text-[#9CA3AF]">Kakao Map 영역</span>
-                </div>
-              </div>
-            )}
+              ) : (
+                filteredAddrRows.map((row) => (
+                  <button
+                    key={row.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedRow(row);
+                      // 기존 address가 있고 같은 row면 detail을 유지, 아니면 row의 detail로 초기화
+                      setDetailAddress((prev) => {
+                        if (address?.id === row.id) return prev || address.detail || row.address_detail || "";
+                        return row.address_detail || "";
+                      });
+                    }}
+                    className={`w-full p-3 rounded-xl text-left transition-colors ${
+                      selectedRow?.id === row.id
+                        ? "bg-[#F0FDF4] border-2 border-[#22C55E]"
+                        : "bg-[#F8FAFC] border border-[#E5E7EB] hover:bg-[#F1F5F9]"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-[#111827] truncate">{row.address_line}</p>
+                        <p className="text-xs text-[#6B7280] mt-0.5 truncate">
+                          {row.region_sigungu} {row.region_dong}
+                        </p>
+                        {row.address_detail ? (
+                          <p className="text-xs text-[#9CA3AF] mt-0.5 truncate">{row.address_detail}</p>
+                        ) : null}
+                        {selectedRow?.id === row.id ? (
+                          <div className="flex items-center gap-1 mt-1 text-[#22C55E]">
+                            <Check className="w-3 h-3" />
+                            <span className="text-xs">선택됨</span>
+                          </div>
+                        ) : null}
+                      </div>
 
-            {selectedAddress && (
-              <div className="space-y-2">
-                <Label className="text-sm font-medium text-[#111827]">상세 주소</Label>
-                <Input
-                  value={detailAddress}
-                  onChange={(e) => setDetailAddress(e.target.value)}
-                  placeholder="동/호수 등"
-                  className="rounded-xl border-[#E5E7EB]"
-                />
-              </div>
-            )}
+                      <Badge
+                        variant="outline"
+                        className="bg-white text-[#374151] border-[#E5E7EB] text-[11px] shrink-0"
+                      >
+                        {row.region_sigungu}
+                      </Badge>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
 
-            <PrimaryButton onClick={handleAddressSave} disabled={!selectedAddress} className="w-full">
+            {/* 상세주소 */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium text-[#111827]">상세 주소</Label>
+              <Input
+                value={detailAddress}
+                onChange={(e) => setDetailAddress(e.target.value)}
+                placeholder="동/호수 등"
+                className="rounded-xl border-[#E5E7EB]"
+                disabled={!selectedRow}
+              />
+              <p className="text-[11px] text-[#9CA3AF]">
+                선택한 주소의 상세주소는 이번 요청에만 반영됩니다(주소록 자체 수정은 다음 단계).
+              </p>
+            </div>
+
+            <PrimaryButton onClick={handleAddressSave} disabled={!selectedRow} className="w-full">
               주소 저장
             </PrimaryButton>
+
+            <Button
+              variant="ghost"
+              onClick={() => router.push("/me/addresses")}
+              className="w-full text-[#6B7280] hover:text-[#111827]"
+              type="button"
+            >
+              주소 관리로 이동
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
