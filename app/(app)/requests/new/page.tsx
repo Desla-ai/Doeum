@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,23 +10,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import {
-  PrimaryButton,
-  SecondaryButton,
-  TierBadge,
-  ScoreChip,
-} from "@/components/ui-kit";
+import { PrimaryButton, TierBadge, ScoreChip } from "@/components/ui-kit";
 import { BottomCTA } from "@/components/shell/BottomCTA";
 import { useAppMode } from "@/components/providers/AppModeProvider";
-import type { RequestData, PreferredHelper } from "@/lib/types/request";
-import { toKSTISOString } from "@/lib/time/krTime";
 import {
   MapPin,
   Calendar,
@@ -69,14 +56,14 @@ const mockAddressResults = [
   },
 ];
 
-const mockPreferredHelper: PreferredHelper = {
+const mockPreferredHelper = {
   id: "helper_123",
   name: "김영희",
-  tier: "GOLD",
+  tier: "GOLD" as const,
   matchingScore: 920,
 };
 
-// Helper mode banner component - shown inline at top, not blocking the form
+// Helper mode banner
 function HelperModeBanner({ onSwitchMode }: { onSwitchMode: () => void }) {
   return (
     <div className="m-4 p-4 rounded-2xl border-2 border-[#F59E0B] bg-[#FFFBEB]">
@@ -85,9 +72,7 @@ function HelperModeBanner({ onSwitchMode }: { onSwitchMode: () => void }) {
           <AlertCircle className="w-5 h-5 text-[#F59E0B]" />
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="font-medium text-[#92400E] mb-1">
-            고객 모드에서 요청을 올릴 수 있어요
-          </h3>
+          <h3 className="font-medium text-[#92400E] mb-1">고객 모드에서 요청을 올릴 수 있어요</h3>
           <p className="text-sm text-[#B45309] mb-3">
             현재 도우미 모드입니다. 요청을 올리려면 고객 모드로 전환해주세요.
           </p>
@@ -98,6 +83,11 @@ function HelperModeBanner({ onSwitchMode }: { onSwitchMode: () => void }) {
       </div>
     </div>
   );
+}
+
+function splitRegion(region: string) {
+  // "서울 강남구" -> sigungu="서울 강남구", dong="" (mock 데이터가 dong을 안 주므로 최소 처리)
+  return { region_sigungu: region || "", region_dong: "" };
 }
 
 export default function NewRequestPage() {
@@ -118,32 +108,32 @@ export default function NewRequestPage() {
     detail: string;
     region: string;
   } | null>(null);
+
   const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
   const [addressSearch, setAddressSearch] = useState("");
   const [addressResults, setAddressResults] = useState(mockAddressResults);
-  const [selectedAddress, setSelectedAddress] = useState<
-    (typeof mockAddressResults)[0] | null
-  >(null);
+  const [selectedAddress, setSelectedAddress] = useState<(typeof mockAddressResults)[0] | null>(null);
   const [detailAddress, setDetailAddress] = useState("");
+
   const [isDirectRequest, setIsDirectRequest] = useState(!!preferredHelperId);
   const [consentChecked, setConsentChecked] = useState(false);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
-  // Helper mode - show form but with banner (form fields disabled)
   const showHelperBanner = isHelper;
 
   const handlePhotoAdd = () => {
     if (photos.length < 5) {
-      setPhotos([
-        ...photos,
-        `/placeholder.svg?height=200&width=200&text=Photo${photos.length + 1}`,
+      setPhotos((prev) => [
+        ...prev,
+        `/placeholder.svg?height=200&width=200&text=Photo${prev.length + 1}`,
       ]);
     }
   };
 
   const handlePhotoRemove = (index: number) => {
-    setPhotos(photos.filter((_, i) => i !== index));
+    setPhotos((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleAddressSearch = (query: string) => {
@@ -151,8 +141,7 @@ export default function NewRequestPage() {
     if (query) {
       setAddressResults(
         mockAddressResults.filter(
-          (a) =>
-            a.roadAddress.includes(query) || a.jibunAddress.includes(query)
+          (a) => a.roadAddress.includes(query) || a.jibunAddress.includes(query)
         )
       );
     } else {
@@ -180,94 +169,93 @@ export default function NewRequestPage() {
 
   const validateForm = (): boolean => {
     const errors: string[] = [];
-
     if (!category) errors.push("카테고리를 선택해주세요");
     if (!date) errors.push("날짜를 선택해주세요");
     if (!time) errors.push("시간을 선택해주세요");
     if (!address) errors.push("주소를 입력해주세요");
     if (!price || Number(price) <= 0) errors.push("금액을 입력해주세요");
     if (!consentChecked) errors.push("취소/분쟁 정책에 동의해주세요");
-
     setValidationErrors(errors);
     return errors.length === 0;
   };
 
   const handleSubmit = async () => {
-    // Guard: Block submission in helper mode with inline error
     if (isHelper) {
-      setValidationErrors([
-        "고객 모드에서만 요청을 올릴 수 있어요. 상단에서 고객으로 전환해주세요.",
-      ]);
+      setValidationErrors(["고객 모드에서만 요청을 올릴 수 있어요. 상단에서 고객으로 전환해주세요."]);
       return;
     }
 
-    if (!validateForm()) return;
+    if (!validateForm() || !address) return;
 
     setIsSubmitting(true);
+    setValidationErrors([]);
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 400));
-
-    // Generate mock request ID
-    const requestId = `req_${Date.now()}`;
-
-    // Create mock request object with shared RequestData type
-    const newRequest: RequestData = {
-      id: requestId,
-      category: categories.find((c) => c.id === category)?.label || category,
-      status: "posted",
-      datetime: date,
-      time: time,
-      location: address?.road || "",
-      region: address?.region || "",
-      price: Number(price),
-      description: notes,
-      photos: photos,
-      // Save preferredHelper object (not just ID) so detail page can display it
-      ...(isDirectRequest && preferredHelperId
-        ? { preferredHelper: mockPreferredHelper }
-        : {}),
-      createdAt: toKSTISOString(new Date()),
-    };
-
-    // Store in localStorage
     try {
-      const existingRequests = JSON.parse(
-        localStorage.getItem("mock_requests") || "[]"
-      );
-      existingRequests.push(newRequest);
-      localStorage.setItem("mock_requests", JSON.stringify(existingRequests));
-      // Debug log for verification
-      console.log("[v0] Saved request to mock_requests:", newRequest.id, "Total:", existingRequests.length);
-    } catch (e) {
-      console.error("[v0] Failed to save to localStorage:", e);
+      // 1) 주소 먼저 생성 (requests.address_id NOT NULL 대응)
+      const { region_sigungu, region_dong } = splitRegion(address.region);
+
+      const addrRes = await fetch("/api/addresses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          region_sigungu,
+          region_dong,
+          address_line: address.road,
+          address_detail: address.detail || "",
+          lat: null,
+          lng: null,
+        }),
+      });
+
+      const addrJson = await addrRes.json().catch(() => ({}));
+      if (!addrRes.ok) throw new Error(addrJson?.error?.message || `주소 저장 실패 (${addrRes.status})`);
+
+      const address_id = addrJson?.data?.id;
+      if (!address_id) throw new Error("address_id missing");
+
+      // 2) 요청 생성
+      const scheduled_at = `${date}T${time}:00+09:00`; // 단순 구성 (정밀 KST 변환은 다음 단계)
+      const catLabel = categories.find((c) => c.id === category)?.label || category;
+
+      const reqRes = await fetch("/api/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: catLabel,
+          description: notes || "",
+          price: Number(price),
+          scheduled_at,
+          region_sigungu,
+          region_dong,
+          address_id,
+        }),
+      });
+
+      const reqJson = await reqRes.json().catch(() => ({}));
+      if (!reqRes.ok) throw new Error(reqJson?.error?.message || `요청 생성 실패 (${reqRes.status})`);
+
+      const requestId = reqJson?.data?.id;
+      if (!requestId) throw new Error("requestId missing");
+
+      router.push(`/requests/${requestId}`);
+    } catch (e: any) {
+      console.error(e);
+      setValidationErrors([e?.message || "요청 등록에 실패했어요."]);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setIsSubmitting(false);
-
-    // Navigate to created request
-    router.push(`/requests/${requestId}`);
   };
 
   return (
     <div
       className="w-full max-w-full"
-      style={{
-        paddingBottom: "calc(var(--bottom-tabs-h) + var(--safe-bottom) + 80px)",
-      }}
+      style={{ paddingBottom: "calc(var(--bottom-tabs-h) + var(--safe-bottom) + 80px)" }}
     >
-      {/* Debug marker - confirms this is the correct page */}
-      <div className="px-4 pt-2">
-        <p className="text-xs text-[#9CA3AF]">요청 작성 폼 (UI 데모)</p>
-      </div>
-
-      {/* Helper Mode Banner - shown inline at top */}
-      {showHelperBanner && (
-        <HelperModeBanner onSwitchMode={() => setMode("customer")} />
-      )}
+      {/* Helper Mode Banner */}
+      {showHelperBanner && <HelperModeBanner onSwitchMode={() => setMode("customer")} />}
 
       <div className={`p-4 space-y-6 ${showHelperBanner ? "opacity-60" : ""}`}>
-        {/* Preferred Helper Block */}
+        {/* Preferred Helper Block (UI only) */}
         {preferredHelperId && (
           <div className="p-4 rounded-2xl border-2 border-[#22C55E] bg-[#F0FDF4]">
             <div className="flex items-center justify-between mb-3">
@@ -280,27 +268,18 @@ export default function NewRequestPage() {
             </div>
             <div className="flex items-center gap-3">
               <Avatar className="w-10 h-10">
-                <AvatarImage
-                  src="/placeholder.svg"
-                  alt={mockPreferredHelper.name}
-                />
-                <AvatarFallback>
-                  {mockPreferredHelper.name.slice(0, 2)}
-                </AvatarFallback>
+                <AvatarImage src="/placeholder.svg" alt={mockPreferredHelper.name} />
+                <AvatarFallback>{mockPreferredHelper.name.slice(0, 2)}</AvatarFallback>
               </Avatar>
               <div>
-                <p className="font-medium text-[#111827]">
-                  {mockPreferredHelper.name}
-                </p>
+                <p className="font-medium text-[#111827]">{mockPreferredHelper.name}</p>
                 <div className="flex items-center gap-2">
-                  <TierBadge tier={mockPreferredHelper.tier} />
-                  <ScoreChip score={mockPreferredHelper.matchingScore} />
+                  <TierBadge tier={mockPreferredHelper.tier as any} />
+                  <ScoreChip score={mockPreferredHelper.matchingScore as any} />
                 </div>
               </div>
             </div>
-            <p className="text-xs text-[#6B7280] mt-2">
-              이 도우미에게 지정 요청하기
-            </p>
+            <p className="text-xs text-[#6B7280] mt-2">이 도우미에게 지정 요청하기</p>
           </div>
         )}
 
@@ -360,17 +339,9 @@ export default function NewRequestPage() {
             <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
               <div className="flex items-start justify-between">
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm text-[#111827] truncate">
-                    {address.road}
-                  </p>
-                  <p className="text-xs text-[#6B7280] mt-0.5 truncate">
-                    {address.jibun}
-                  </p>
-                  {address.detail && (
-                    <p className="text-xs text-[#6B7280] truncate">
-                      {address.detail}
-                    </p>
-                  )}
+                  <p className="text-sm text-[#111827] truncate">{address.road}</p>
+                  <p className="text-xs text-[#6B7280] mt-0.5 truncate">{address.jibun}</p>
+                  {address.detail && <p className="text-xs text-[#6B7280] truncate">{address.detail}</p>}
                 </div>
                 <Badge
                   variant="outline"
@@ -429,7 +400,7 @@ export default function NewRequestPage() {
           />
         </div>
 
-        {/* Photos */}
+        {/* Photos (UI only for now) */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <Label className="text-sm font-medium text-[#111827]">사진</Label>
@@ -441,12 +412,7 @@ export default function NewRequestPage() {
                 key={index}
                 className="relative w-20 h-20 rounded-xl overflow-hidden flex-shrink-0 border border-[#E5E7EB]"
               >
-                <Image
-                  src={photo || "/placeholder.svg"}
-                  alt={`Photo ${index + 1}`}
-                  fill
-                  className="object-cover"
-                />
+                <Image src={photo || "/placeholder.svg"} alt={`Photo ${index + 1}`} fill className="object-cover" />
                 <button
                   type="button"
                   onClick={() => handlePhotoRemove(index)}
@@ -483,15 +449,10 @@ export default function NewRequestPage() {
             <Checkbox
               id="consent"
               checked={consentChecked}
-              onCheckedChange={(checked) =>
-                setConsentChecked(checked === true)
-              }
+              onCheckedChange={(checked) => setConsentChecked(checked === true)}
               className="mt-0.5 data-[state=checked]:bg-[#22C55E] data-[state=checked]:border-[#22C55E]"
             />
-            <label
-              htmlFor="consent"
-              className="text-sm text-[#374151] cursor-pointer"
-            >
+            <label htmlFor="consent" className="text-sm text-[#374151] cursor-pointer">
               취소/분쟁 정책에 동의합니다
             </label>
           </div>
@@ -516,11 +477,7 @@ export default function NewRequestPage() {
           disabled={isSubmitting}
           className="w-full h-12 text-base"
         >
-          {isSubmitting
-            ? "등록 중..."
-            : showHelperBanner
-              ? "고객 모드로 전환 필요"
-              : "요청 등록하기"}
+          {isSubmitting ? "등록 중..." : showHelperBanner ? "고객 모드로 전환 필요" : "요청 등록하기"}
         </PrimaryButton>
       </BottomCTA>
 
@@ -532,7 +489,6 @@ export default function NewRequestPage() {
           </DialogHeader>
 
           <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
-            {/* Search Input */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#6B7280]" />
               <Input
@@ -543,7 +499,6 @@ export default function NewRequestPage() {
               />
             </div>
 
-            {/* Results List */}
             <div className="flex-1 overflow-y-auto space-y-2 no-scrollbar">
               {addressResults.map((result) => (
                 <button
@@ -556,12 +511,8 @@ export default function NewRequestPage() {
                       : "bg-[#F8FAFC] border border-[#E5E7EB] hover:bg-[#F1F5F9]"
                   }`}
                 >
-                  <p className="text-sm font-medium text-[#111827]">
-                    {result.roadAddress}
-                  </p>
-                  <p className="text-xs text-[#6B7280] mt-0.5">
-                    {result.jibunAddress}
-                  </p>
+                  <p className="text-sm font-medium text-[#111827]">{result.roadAddress}</p>
+                  <p className="text-xs text-[#6B7280] mt-0.5">{result.jibunAddress}</p>
                   {selectedAddress?.id === result.id && (
                     <div className="flex items-center gap-1 mt-1 text-[#22C55E]">
                       <Check className="w-3 h-3" />
@@ -572,7 +523,6 @@ export default function NewRequestPage() {
               ))}
             </div>
 
-            {/* Map Placeholder */}
             {selectedAddress && (
               <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
                 <div className="flex items-center gap-2 text-[#6B7280] mb-2">
@@ -580,19 +530,14 @@ export default function NewRequestPage() {
                   <span className="text-sm">지도에서 위치 확인</span>
                 </div>
                 <div className="aspect-video rounded-lg bg-[#E5E7EB] flex items-center justify-center">
-                  <span className="text-sm text-[#9CA3AF]">
-                    Kakao Map 영역
-                  </span>
+                  <span className="text-sm text-[#9CA3AF]">Kakao Map 영역</span>
                 </div>
               </div>
             )}
 
-            {/* Detail Address */}
             {selectedAddress && (
               <div className="space-y-2">
-                <Label className="text-sm font-medium text-[#111827]">
-                  상세 주소
-                </Label>
+                <Label className="text-sm font-medium text-[#111827]">상세 주소</Label>
                 <Input
                   value={detailAddress}
                   onChange={(e) => setDetailAddress(e.target.value)}
@@ -602,12 +547,7 @@ export default function NewRequestPage() {
               </div>
             )}
 
-            {/* Save Button */}
-            <PrimaryButton
-              onClick={handleAddressSave}
-              disabled={!selectedAddress}
-              className="w-full"
-            >
+            <PrimaryButton onClick={handleAddressSave} disabled={!selectedAddress} className="w-full">
               주소 저장
             </PrimaryButton>
           </div>

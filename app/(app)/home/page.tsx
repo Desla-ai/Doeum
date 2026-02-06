@@ -1,46 +1,62 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useAppMode } from "@/components/providers/AppModeProvider";
 import { HomeHeaderCard } from "@/components/home/HomeHeaderCard";
 import { QuickActions } from "@/components/home/QuickActions";
 import { CustomerHomePanel } from "@/components/home/CustomerHomePanel";
 import { HelperHomePanel } from "@/components/home/HelperHomePanel";
-import type { HelperBadge } from "@/components/ui-kit";
+import { Info } from "lucide-react";
 
-// Mock user data
-const mockUser = {
-  name: "홍길동",
-  avatarUrl: "/placeholder.svg",
-  isOnline: true,
-  tier: "GOLD" as const,
-  matchingScore: 920,
-  badges: [
-    { id: "b1", label: "응답왕", description: "평균 응답 5분 이내" },
-    { id: "b2", label: "단골왕", description: "재요청률 80% 이상" },
-    { id: "b3", label: "성실왕", description: "완료율 95% 이상" },
-  ] as HelperBadge[],
+type Profile = {
+  id: string;
+  name: string;
+  tier: "BRONZE" | "SILVER" | "GOLD" | "PLATINUM" | "DIAMOND";
+  matching_score: number;
+  is_online: boolean;
 };
 
 export default function HomePage() {
   const { isHelper } = useAppMode();
+  const [profile, setProfile] = useState<Profile | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch("/api/profiles/me");
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) setProfile(json.data);
+    })();
+  }, []);
+
+  const name = profile?.name ?? "사용자";
+  const tier = (profile?.tier ?? "BRONZE") as any;
+  const matchingScore = profile?.matching_score ?? 500;
 
   return (
     <div className="w-full max-w-full">
       <div className="p-4 space-y-4">
-        {/* Shared Header Card */}
+        <div className="p-3 rounded-2xl bg-[#F8FAFC] border border-[#E5E7EB]">
+          <div className="flex items-start gap-2">
+            <Info className="w-4 h-4 text-[#6B7280] mt-0.5 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-[#111827]">로그인 정보 기반으로 표시됩니다</p>
+              <p className="text-xs text-[#6B7280] mt-0.5">
+                홈 헤더는 profiles(me)에서 가져옵니다.
+              </p>
+            </div>
+          </div>
+        </div>
+
         <HomeHeaderCard
-          name={mockUser.name}
-          avatarUrl={mockUser.avatarUrl}
-          isOnline={mockUser.isOnline}
-          tier={mockUser.tier}
-          matchingScore={mockUser.matchingScore}
-          badges={mockUser.badges}
+          name={name}
+          avatarUrl={"/placeholder.svg"}
+          isOnline={profile?.is_online ?? true}
+          tier={tier}
+          matchingScore={matchingScore as any}
+          badges={[]}
         />
 
-        {/* Quick Actions */}
         <QuickActions />
-
-        {/* Mode-specific Panels */}
         {isHelper ? <HelperHomePanel /> : <CustomerHomePanel />}
       </div>
     </div>

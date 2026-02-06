@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useMockAuth } from "@/hooks/useMockAuth";
+import { useRouter, usePathname } from "next/navigation";
 import { FullScreenLoader } from "@/components/ui-kit";
+import { createClient } from "@/utils/supabase/browser";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -11,33 +11,39 @@ interface AuthGuardProps {
 
 export function AuthGuard({ children }: AuthGuardProps) {
   const router = useRouter();
-  const { authed, isLoading } = useMockAuth();
-  const [timedOut, setTimedOut] = useState(false);
+  const pathname = usePathname();
 
-  // Fail-open timeout: if auth check takes too long, render children anyway
-  // This ensures UI-only demo mode always works
+  const [isLoading, setIsLoading] = useState(true);
+  const [authed, setAuthed] = useState(false);
+
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setTimedOut(true);
-    }, 600); // 600ms max wait - then fail-open for UI demo
+    const supabase = createClient();
 
-    return () => clearTimeout(timer);
+    const init = async () => {
+      const { data } = await supabase.auth.getSession();
+      setAuthed(!!data.session);
+      setIsLoading(false);
+    };
+
+    init();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthed(!!session);
+    });
+
+    return () => sub.subscription.unsubscribe();
   }, []);
 
-  // Redirect to login if not authenticated (but don't block rendering)
   useEffect(() => {
-    if (!isLoading && !authed && !timedOut) {
-      router.replace("/login");
+    if (!isLoading && !authed) {
+      // 로그인 후 돌아올 목적지 저장(원하면 next 파라미터로 확장 가능)
+      router.replace(`/login`);
     }
-  }, [authed, isLoading, timedOut, router]);
+  }, [authed, isLoading, router, pathname]);
 
-  // Show loader only during initial check, with strict timeout
-  // After timeout or if loading completes, always render children (fail-open for UI demo)
-  if (isLoading && !timedOut) {
-    return <FullScreenLoader message="로딩 중..." />;
-  }
+  if (isLoading) return <FullScreenLoader message="로딩 중..." />;
 
-  // Always render children after timeout or when authed
-  // This ensures UI-only mode always shows the UI
+  if (!authed) return null;
+
   return <>{children}</>;
 }

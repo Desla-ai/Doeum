@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -10,253 +10,322 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PrimaryButton, SecondaryButton, EmptyState } from "@/components/ui-kit";
 import { useToast } from "@/hooks/use-toast";
-import { MapPin, Plus, Star, Trash2 } from "lucide-react";
+import { MapPin, Plus, RefreshCw, Crosshair } from "lucide-react";
 
-interface Address {
-  id: string;
-  label: string;
-  address: string;
-  detail: string;
-  isDefault: boolean;
+declare global {
+  interface Window {
+    kakao: any;
+  }
 }
 
-const initialAddresses: Address[] = [
-  {
-    id: "addr_1",
-    label: "집",
-    address: "서울 강남구 테헤란로 152",
-    detail: "역삼빌딩 3층",
-    isDefault: true,
-  },
-  {
-    id: "addr_2",
-    label: "회사",
-    address: "서울 서초구 강남대로 373",
-    detail: "서초타워 15층",
-    isDefault: false,
-  },
-];
+function useKakaoMapScript() {
+  const [ready, setReady] = useState(false);
+  const key = process.env.NEXT_PUBLIC_KAKAO_MAP_JS_KEY;
+
+  useEffect(() => {
+    if (!key) return;
+
+    // already loaded
+    if (typeof window !== "undefined" && window.kakao?.maps) {
+      setReady(true);
+      return;
+    }
+
+    const scriptId = "kakao-map-sdk";
+    if (document.getElementById(scriptId)) return;
+
+    const script = document.createElement("script");
+    script.id = scriptId;
+    script.async = true;
+    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${key}&autoload=false`;
+    script.onload = () => {
+      window.kakao.maps.load(() => setReady(true));
+    };
+    document.head.appendChild(script);
+  }, [key]);
+
+  return { ready, hasKey: !!key };
+}
+
+type AddressRow = {
+  id: string;
+  user_id: string;
+  region_sigungu: string;
+  region_dong: string;
+  address_line: string;
+  address_detail: string;
+  lat: number | null;
+  lng: number | null;
+  created_at: string;
+};
 
 export default function AddressesPage() {
   const { toast } = useToast();
-  const [addresses, setAddresses] = useState<Address[]>(initialAddresses);
+  const { ready: mapReady, hasKey } = useKakaoMapScript();
+
+  const [rows, setRows] = useState<AddressRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [newLabel, setNewLabel] = useState("");
-  const [newAddress, setNewAddress] = useState("");
-  const [newDetail, setNewDetail] = useState("");
+  const [regionSigungu, setRegionSigungu] = useState("");
+  const [regionDong, setRegionDong] = useState("");
+  const [addressLine, setAddressLine] = useState("");
+  const [addressDetail, setAddressDetail] = useState("");
 
-  const handleSetDefault = (id: string) => {
-    setAddresses((prev) =>
-      prev.map((addr) => ({
-        ...addr,
-        isDefault: addr.id === id,
-      }))
-    );
-    toast({
-      title: "기본 주소 설정됨",
-      description: "기본 주소가 변경되었습니다. (데모)",
-    });
+  // map state
+  const mapElRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<any>(null);
+  const markerRef = useRef<any>(null);
+  const [pickedLatLng, setPickedLatLng] = useState<{ lat: number; lng: number } | null>(null);
+
+  const canSubmit = useMemo(() => {
+    return !!regionSigungu.trim() && !!regionDong.trim() && !!addressLine.trim();
+  }, [regionSigungu, regionDong, addressLine]);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/addresses", { method: "GET" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error?.message || json?.error || `주소 목록 로드 실패 (${res.status})`);
+      setRows((json?.data ?? []) as AddressRow[]);
+    } catch (e: any) {
+      console.error(e);
+      setRows([]);
+      toast({
+        title: "주소를 불러오지 못했어요",
+        description: e?.message || "잠시 후 다시 시도해 주세요.",
+        variant: "destructive" as any,
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleDelete = (id: string) => {
-    setAddresses((prev) => prev.filter((addr) => addr.id !== id));
-    toast({
-      title: "주소 삭제됨",
-      description: "주소가 삭제되었습니다. (데모)",
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // init map when dialog opens
+  useEffect(() => {
+    if (!isAddDialogOpen) return;
+    if (!mapReady) return;
+    if (!mapElRef.current) return;
+
+    const kakao = window.kakao;
+    const center = new kakao.maps.LatLng(37.5665, 126.9780); // 서울 시청
+    const map = new kakao.maps.Map(mapElRef.current, { center, level: 5 });
+    mapRef.current = map;
+
+    const marker = new kakao.maps.Marker({ position: center });
+    marker.setMap(map);
+    markerRef.current = marker;
+
+    setPickedLatLng({ lat: 37.5665, lng: 126.9780 });
+
+    kakao.maps.event.addListener(map, "click", function (mouseEvent: any) {
+      const latlng = mouseEvent.latLng;
+      const lat = latlng.getLat();
+      const lng = latlng.getLng();
+      marker.setPosition(latlng);
+      setPickedLatLng({ lat, lng });
     });
+  }, [isAddDialogOpen, mapReady]);
+
+  const handleAdd = async () => {
+    if (!canSubmit) return;
+
+    setSaving(true);
+    try {
+      const res = await fetch("/api/addresses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          region_sigungu: regionSigungu.trim(),
+          region_dong: regionDong.trim(),
+          address_line: addressLine.trim(),
+          address_detail: addressDetail.trim(),
+          lat: pickedLatLng?.lat ?? null,
+          lng: pickedLatLng?.lng ?? null,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error?.message || json?.error || `주소 저장 실패 (${res.status})`);
+
+      toast({ title: "주소가 추가됐어요" });
+
+      setRegionSigungu("");
+      setRegionDong("");
+      setAddressLine("");
+      setAddressDetail("");
+      setPickedLatLng(null);
+      setIsAddDialogOpen(false);
+
+      await load();
+    } catch (e: any) {
+      console.error(e);
+      toast({
+        title: "주소 추가 실패",
+        description: e?.message || "잠시 후 다시 시도해 주세요.",
+        variant: "destructive" as any,
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleAddAddress = () => {
-    if (!newLabel.trim() || !newAddress.trim()) return;
-
-    const newAddr: Address = {
-      id: `addr_${Date.now()}`,
-      label: newLabel,
-      address: newAddress,
-      detail: newDetail,
-      isDefault: addresses.length === 0,
-    };
-
-    setAddresses((prev) => [...prev, newAddr]);
-    setNewLabel("");
-    setNewAddress("");
-    setNewDetail("");
-    setIsAddDialogOpen(false);
-
-    toast({
-      title: "주소 추가됨",
-      description: "새 주소가 추가되었습니다. (데모)",
-    });
+  const centerToMarker = () => {
+    if (!mapRef.current || !markerRef.current) return;
+    const kakao = window.kakao;
+    const pos = markerRef.current.getPosition();
+    mapRef.current.setCenter(new kakao.maps.LatLng(pos.getLat(), pos.getLng()));
   };
 
   return (
     <div className="w-full max-w-full p-4 space-y-4">
-      {/* Add Address Button */}
-      <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-        <DialogTrigger asChild>
-          <SecondaryButton className="w-full h-12">
-            <Plus className="w-4 h-4 mr-2" />
-            주소 추가
-          </SecondaryButton>
-        </DialogTrigger>
-        <DialogContent className="sm:max-w-md rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-[#111827]">새 주소 추가</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="label" className="text-[#374151]">
-                주소 이름
-              </Label>
-              <Input
-                id="label"
-                value={newLabel}
-                onChange={(e) => setNewLabel(e.target.value)}
-                placeholder="예: 집, 회사"
-                className="h-12 rounded-xl"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="address" className="text-[#374151]">
-                주소
-              </Label>
-              <Input
-                id="address"
-                value={newAddress}
-                onChange={(e) => setNewAddress(e.target.value)}
-                placeholder="주소를 입력하세요"
-                className="h-12 rounded-xl"
-              />
-              <p className="text-xs text-[#9CA3AF]">
-                * 실제 앱에서는 주소 검색 API가 연동됩니다
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="detail" className="text-[#374151]">
-                상세주소 <span className="text-[#9CA3AF]">(선택)</span>
-              </Label>
-              <Input
-                id="detail"
-                value={newDetail}
-                onChange={(e) => setNewDetail(e.target.value)}
-                placeholder="상세주소를 입력하세요"
-                className="h-12 rounded-xl"
-              />
-            </div>
-          </div>
-          <DialogFooter className="gap-2">
-            <DialogClose asChild>
-              <SecondaryButton className="flex-1">취소</SecondaryButton>
-            </DialogClose>
-            <PrimaryButton
-              onClick={handleAddAddress}
-              disabled={!newLabel.trim() || !newAddress.trim()}
-              className="flex-1"
-            >
-              추가
+      <div className="flex gap-2">
+        <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+          <DialogTrigger asChild>
+            <PrimaryButton className="flex-1 h-12">
+              <Plus className="w-4 h-4 mr-2" />
+              주소 추가
             </PrimaryButton>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </DialogTrigger>
 
-      {/* Address List */}
-      {addresses.length === 0 ? (
+          <DialogContent className="sm:max-w-md rounded-2xl">
+            <DialogHeader>
+              <DialogTitle className="text-[#111827]">새 주소 추가</DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label className="text-[#374151]">시/군/구</Label>
+                <Input
+                  value={regionSigungu}
+                  onChange={(e) => setRegionSigungu(e.target.value)}
+                  placeholder="예: 성남시 분당구"
+                  className="h-12 rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-[#374151]">동</Label>
+                <Input
+                  value={regionDong}
+                  onChange={(e) => setRegionDong(e.target.value)}
+                  placeholder="예: 정자동"
+                  className="h-12 rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-[#374151]">주소</Label>
+                <Input
+                  value={addressLine}
+                  onChange={(e) => setAddressLine(e.target.value)}
+                  placeholder="도로명 주소"
+                  className="h-12 rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-[#374151]">
+                  상세주소 <span className="text-[#9CA3AF]">(선택)</span>
+                </Label>
+                <Input
+                  value={addressDetail}
+                  onChange={(e) => setAddressDetail(e.target.value)}
+                  placeholder="동/호수 등"
+                  className="h-12 rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-[#374151]">지도에서 위치 선택</Label>
+
+                {!hasKey ? (
+                  <div className="p-3 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-sm text-[#DC2626]">
+                    NEXT_PUBLIC_KAKAO_MAP_JS_KEY가 설정되지 않았어요.
+                  </div>
+                ) : !mapReady ? (
+                  <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB] text-sm text-[#6B7280]">
+                    지도 로딩 중...
+                  </div>
+                ) : (
+                  <>
+                    <div ref={mapElRef} className="w-full h-48 rounded-xl overflow-hidden border border-[#E5E7EB]" />
+                    <div className="flex items-center justify-between text-xs text-[#6B7280] mt-2">
+                      <span>
+                        선택 좌표:{" "}
+                        {pickedLatLng ? `${pickedLatLng.lat.toFixed(6)}, ${pickedLatLng.lng.toFixed(6)}` : "(미선택)"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={centerToMarker}
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-[#F0FDF4] text-[#22C55E]"
+                      >
+                        <Crosshair className="w-3 h-3" />
+                        센터
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-[#9CA3AF]">지도 클릭으로 마커를 이동해 좌표를 저장합니다.</p>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2">
+              <DialogClose asChild>
+                <SecondaryButton className="flex-1" disabled={saving}>
+                  취소
+                </SecondaryButton>
+              </DialogClose>
+              <PrimaryButton onClick={handleAdd} disabled={!canSubmit || saving} className="flex-1">
+                {saving ? "저장 중..." : "추가"}
+              </PrimaryButton>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <SecondaryButton className="h-12 px-4" onClick={load} disabled={loading}>
+          <RefreshCw className="w-4 h-4 mr-2" />
+          새로고침
+        </SecondaryButton>
+      </div>
+
+      {loading ? (
+        <div className="p-4 text-sm text-[#6B7280]">주소를 불러오는 중...</div>
+      ) : rows.length === 0 ? (
         <EmptyState
-          icon={MapPin}
+          icon={<MapPin className="w-8 h-8" />}
           title="등록된 주소가 없어요"
-          description="주소를 추가하면 요청 시 빠르게 선택할 수 있어요"
+          description="주소를 추가하면 요청 시 빠르게 사용할 수 있어요"
         />
       ) : (
         <div className="space-y-3">
-          {addresses.map((addr) => (
-            <div
-              key={addr.id}
-              className="p-4 rounded-2xl border border-[#E5E7EB] bg-white"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3 min-w-0">
-                  <MapPin className="w-5 h-5 text-[#6B7280] mt-0.5 shrink-0" />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-[#111827]">
-                        {addr.label}
-                      </span>
-                      {addr.isDefault && (
-                        <span className="px-2 py-0.5 text-xs font-medium bg-[#F0FDF4] text-[#22C55E] rounded-full">
-                          기본
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-[#374151] truncate">
-                      {addr.address}
+          {rows.map((addr) => (
+            <div key={addr.id} className="p-4 rounded-2xl border border-[#E5E7EB] bg-white">
+              <div className="flex items-start gap-3 min-w-0">
+                <MapPin className="w-5 h-5 text-[#6B7280] mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-[#111827]">
+                    {addr.region_sigungu} {addr.region_dong}
+                  </p>
+                  <p className="text-sm text-[#374151] break-words">{addr.address_line}</p>
+                  {!!addr.address_detail && <p className="text-sm text-[#6B7280] break-words">{addr.address_detail}</p>}
+                  {addr.lat != null && addr.lng != null && (
+                    <p className="text-xs text-[#9CA3AF] mt-2">
+                      좌표: {addr.lat.toFixed(6)}, {addr.lng.toFixed(6)}
                     </p>
-                    {addr.detail && (
-                      <p className="text-sm text-[#6B7280] truncate">
-                        {addr.detail}
-                      </p>
-                    )}
-                  </div>
+                  )}
                 </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[#E5E7EB]">
-                {!addr.isDefault && (
-                  <button
-                    type="button"
-                    onClick={() => handleSetDefault(addr.id)}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-[#22C55E] hover:bg-[#F0FDF4] rounded-lg transition-colors"
-                  >
-                    <Star className="w-3 h-3" />
-                    기본 주소로 설정
-                  </button>
-                )}
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-[#EF4444] hover:bg-[#FEF2F2] rounded-lg transition-colors ml-auto"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      삭제
-                    </button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent className="rounded-2xl">
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>주소를 삭제할까요?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        '{addr.label}' 주소가 삭제됩니다. 이 작업은 되돌릴 수
-                        없습니다.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel className="rounded-xl">
-                        취소
-                      </AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={() => handleDelete(addr.id)}
-                        className="bg-[#EF4444] hover:bg-[#DC2626] rounded-xl"
-                      >
-                        삭제
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
               </div>
             </div>
           ))}

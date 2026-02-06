@@ -1,45 +1,55 @@
 "use client";
 
-import Link from "next/link";
+import { createClient } from "@/utils/supabase/browser";
 
 interface SocialLoginButtonsProps {
   action?: "login" | "signup";
 }
 
-export function SocialLoginButtons({
-  action = "login",
-}: SocialLoginButtonsProps) {
+export function SocialLoginButtons({ action = "login" }: SocialLoginButtonsProps) {
   const actionText = action === "login" ? "계속하기" : "가입하기";
+
+  const signIn = async (provider: "kakao" | "google") => {
+    const supabase = createClient();
+
+    const base =
+      process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+
+    // callback 페이지는 이미 app/(auth)/auth/callback/page.tsx 가 있으므로
+    // 여기로 돌려서 code exchange 처리
+    const redirectTo = `${base}/auth/callback?next=/home`;
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo },
+    });
+
+    if (error) {
+      alert(error.message);
+    }
+  };
 
   return (
     <div className="space-y-3">
       {/* Kakao Login */}
-      <Link
-        href="/auth/callback?provider=kakao"
+      <button
+        type="button"
+        onClick={() => signIn("kakao")}
         className="flex items-center justify-center gap-2 w-full h-12 rounded-xl bg-[#FEE500] text-[#191919] font-medium hover:bg-[#FDD835] transition-colors"
       >
-        <svg
-          className="w-5 h-5"
-          viewBox="0 0 24 24"
-          fill="currentColor"
-          aria-hidden="true"
-        >
+        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M12 3C6.48 3 2 6.48 2 10.5c0 2.52 1.68 4.74 4.2 6.03-.18.66-.66 2.4-.75 2.76-.12.48.18.48.36.36.15-.09 2.34-1.56 3.3-2.19.63.09 1.26.12 1.89.12 5.52 0 10-3.48 10-7.5S17.52 3 12 3z" />
         </svg>
         <span>카카오로 {actionText}</span>
-      </Link>
+      </button>
 
       {/* Google Login */}
-      <Link
-        href="/auth/callback?provider=google"
+      <button
+        type="button"
+        onClick={() => signIn("google")}
         className="flex items-center justify-center gap-2 w-full h-12 rounded-xl bg-white border border-[#E5E7EB] text-[#374151] font-medium hover:bg-[#F8FAFC] transition-colors"
       >
-        <svg
-          className="w-5 h-5"
-          viewBox="0 0 24 24"
-          fill="none"
-          aria-hidden="true"
-        >
+        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path
             d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
             fill="#4285F4"
@@ -58,7 +68,7 @@ export function SocialLoginButtons({
           />
         </svg>
         <span>Google로 {actionText}</span>
-      </Link>
+      </button>
     </div>
   );
 }
